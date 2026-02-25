@@ -3,52 +3,237 @@
 <head>
 <meta charset="UTF-8">
 <title>Mini Task Manager</title>
-<style>
-body { font-family: Arial; margin: 40px; }
-.completed { text-decoration: line-through; color: gray; }
-button { margin-left: 5px; }
-</style>
+<link rel="stylesheet" href="../static/krasota.css">
 </head>
 <body>
-<h1>Mini Task Manager</h1>
-<input id="new-task" placeholder="New task">
-<button onclick="addTask()">Add</button>
-<ul id="task-list"></ul>
+<h1>⏰ Task Manager with Deadlines</h1>
+<div class="container">
+    <div class="input-group">
+        <input id="new-task" placeholder="Что нужно сделать?" autocomplete="off">
+        <input type="datetime-local" id="due-date">
+        <button class="add-btn" onclick="addTask()">Добавить</button>
+    </div>
+    
+    <div class="filters">
+        <button class="filter-btn active" onclick="filterTasks('all')">Все</button>
+        <button class="filter-btn" onclick="filterTasks('active')">Активные</button>
+        <button class="filter-btn" onclick="filterTasks('completed')">Выполненные</button>
+        <button class="filter-btn" onclick="filterTasks('overdue')">Просроченные</button>
+    </div>
+    
+    <ul id="task-list"></ul>
+    
+    <div class="stats">
+        <div class="stat-item">
+            Всего: <span id="total-count">0</span>
+        </div>
+        <div class="stat-item">
+            Выполнено: <span id="completed-count">0</span>
+        </div>
+        <div class="stat-item">
+            Активные: <span id="active-count">0</span>
+        </div>
+        <div class="stat-item overdue-stat">
+            Просрочено: <span id="overdue-count">0</span>
+        </div>
+    </div>
+</div>
 
 <script>
+let currentFilter = 'all';
+let tasks = [];
+
 async function fetchTasks() {
     const res = await fetch('/tasks');
-    const tasks = await res.json();
+    tasks = await res.json();
+    renderTasks();
+}
+
+function renderTasks() {
     const list = document.getElementById('task-list');
     list.innerHTML = '';
-    tasks.forEach(task => {
+    
+    let filteredTasks = tasks;
+    
+    // Применяем фильтр
+    if (currentFilter === 'active') {
+        filteredTasks = tasks.filter(t => !t.completed);
+    } else if (currentFilter === 'completed') {
+        filteredTasks = tasks.filter(t => t.completed);
+    } else if (currentFilter === 'overdue') {
+        filteredTasks = tasks.filter(t => !t.completed && t.is_overdue);
+    }
+    
+    filteredTasks.forEach((task, index) => {
         const li = document.createElement('li');
-        li.textContent = task.title;
-        if(task.completed) li.classList.add('completed');
-        li.onclick = async () => { await toggleTask(task.id); fetchTasks(); };
-        const del = document.createElement('button');
-        del.textContent = 'Delete';
-        del.onclick = async (e) => { e.stopPropagation(); await deleteTask(task.id); fetchTasks(); };
-        li.appendChild(del);
+        li.style.animationDelay = `${index * 0.05}s`;
+        
+        if(task.completed) {
+            li.classList.add('completed');
+        }
+        if(task.is_overdue && !task.completed) {
+            li.classList.add('overdue');
+        }
+        
+        // Контент задачи
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'task-content';
+        
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'task-title';
+        titleSpan.textContent = task.title;
+        
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'task-meta';
+        
+        // Добавляем информацию о сроке
+        if (task.due_date) {
+            const dueDate = new Date(task.due_date);
+            const now = new Date();
+            const daysLeft = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));
+            
+            const dueDateSpan = document.createElement('span');
+            dueDateSpan.className = 'due-date';
+            
+            if (task.is_overdue) {
+                dueDateSpan.classList.add('urgent');
+                dueDateSpan.innerHTML = `⚠️ Просрочено: ${formatDate(dueDate)}`;
+            } else if (daysLeft <= 1 && !task.completed) {
+                dueDateSpan.classList.add('warning');
+                dueDateSpan.innerHTML = `⏰ Остался 1 день: ${formatDate(dueDate)}`;
+            } else if (daysLeft <= 3 && !task.completed) {
+                dueDateSpan.classList.add('warning');
+                dueDateSpan.innerHTML = `⚡ ${daysLeft} дня: ${formatDate(dueDate)}`;
+            } else {
+                dueDateSpan.innerHTML = `📅 ${formatDate(dueDate)}`;
+            }
+            
+            metaDiv.appendChild(dueDateSpan);
+        }
+        
+        if (task.is_overdue && !task.completed) {
+            const badge = document.createElement('span');
+            badge.className = 'overdue-badge';
+            badge.textContent = 'ПРОСРОЧЕНО';
+            metaDiv.appendChild(badge);
+        }
+        
+        contentDiv.appendChild(titleSpan);
+        contentDiv.appendChild(metaDiv);
+        
+        // Действия
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'task-actions';
+        
+        const toggleBtn = document.createElement('button');
+        toggleBtn.textContent = task.completed ? '✓' : '○';
+        toggleBtn.style.background = task.completed ? '#4caf50' : '#667eea';
+        toggleBtn.onclick = async (e) => {
+            e.stopPropagation();
+            await toggleTask(task.id);
+            fetchTasks();
+        };
+        
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '✕';
+        delBtn.onclick = async (e) => {
+            e.stopPropagation();
+            if(confirm('Удалить задачу?')) {
+                await deleteTask(task.id);
+                fetchTasks();
+            }
+        };
+        
+        actionsDiv.appendChild(toggleBtn);
+        actionsDiv.appendChild(delBtn);
+        
+        li.appendChild(contentDiv);
+        li.appendChild(actionsDiv);
+        
+        // Клик по задаче для отметки выполнения
+        li.addEventListener('click', async (e) => {
+            if (!e.target.closest('button')) {
+                await toggleTask(task.id);
+                fetchTasks();
+            }
+        });
+        
         list.appendChild(li);
     });
+    
+    updateStats();
+}
+
+function formatDate(date) {
+    return date.toLocaleString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function updateStats() {
+    const total = tasks.length;
+    const completed = tasks.filter(t => t.completed).length;
+    const active = tasks.filter(t => !t.completed).length;
+    const overdue = tasks.filter(t => !t.completed && t.is_overdue).length;
+    
+    document.getElementById('total-count').textContent = total;
+    document.getElementById('completed-count').textContent = completed;
+    document.getElementById('active-count').textContent = active;
+    document.getElementById('overdue-count').textContent = overdue;
+}
+
+function filterTasks(filter) {
+    currentFilter = filter;
+    
+    // Обновляем активный класс у кнопок
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+    
+    renderTasks();
 }
 
 async function addTask() {
     const input = document.getElementById('new-task');
-    if(!input.value.trim()) return;
-    await fetch('/tasks', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title: input.value}) });
+    const dueDate = document.getElementById('due-date').value;
+    
+    if(!input.value.trim()) {
+        input.style.borderColor = '#ff4757';
+        setTimeout(() => input.style.borderColor = '#e0e0e0', 300);
+        return;
+    }
+    
+    const taskData = {
+        title: input.value,
+        due_date: dueDate || null
+    };
+    
+    await fetch('/tasks', { 
+        method: 'POST', 
+        headers:{'Content-Type':'application/json'}, 
+        body: JSON.stringify(taskData) 
+    });
+    
     input.value = '';
+    document.getElementById('due-date').value = '';
     fetchTasks();
 }
 
 async function toggleTask(id) {
-    await fetch(`/tasks/${id}`, { method: 'PUT' });
+    await fetch(`/tasks/${id}/toggle`, { method: 'PUT' });
 }
 
 async function deleteTask(id) {
     await fetch(`/tasks/${id}`, { method: 'DELETE' });
 }
+
+// Запускаем проверку просрочек каждую минуту
+setInterval(fetchTasks, 60000);
 
 fetchTasks();
 </script>
